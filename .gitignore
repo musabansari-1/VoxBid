@@ -1,0 +1,19 @@
+# Ignore FastAPI app artifacts inside backend/
+backend/__pycache__/
+backend/*.py[cod]
+backend/*.log
+backend/*.sqlite3
+backend/*.db
+backend/.env
+backend/.venv/
+backend/venv/
+backend/env/
+backend/.mypy_cache/
+backend/.pytest_cache/
+backend/.DS_Store
+backend/.coverage
+backend/htmlcov/
+backend/*.pid
+backend/*.spec
+backend/dist/
+backend/build/

@@ -9,5 +9,34 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    <script>
+      async function loadWidget() {
+        try {
+          const response = await fetch('/get-omnidimension-widget');
+          
+          // First check if the request was successful
+          if (!response.ok) {
+            throw new Error(`Server returned ${response.status}`);
+          }
+          
+          // Then parse the JSON
+          const data = await response.json();
+          
+          // Create and append the script tag
+          const script = document.createElement('script');
+          script.id = 'omnidimension-web-widget';
+          script.src = data.scriptUrl;
+          script.async = true;
+          document.body.appendChild(script);
+          
+        } catch (error) {
+          console.error('Widget loading failed:', error);
+          // Fallback: Load without secret key or show error message
+        }
+      }
+    
+      // Call the function
+      loadWidget();
+    </script>
   </body>
 </html>

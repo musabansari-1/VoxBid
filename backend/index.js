@@ -28,7 +28,7 @@ const PRODUCTS = {
     "highest_bidder": "Aarav Sharma",
     "end_time": moment().add(3, 'minutes').toISOString(),
     "history": [2000, 2500, 3100, 3500],
-    "bids": 4
+    "bids": 19
   },
   "Vintage Watch": {
     "description": "Classic 1960s Swiss automatic wristwatch in mint condition.",
@@ -36,7 +36,7 @@ const PRODUCTS = {
     "highest_bidder": "Meera Kapoor",
     "end_time": moment().add(8, 'minutes').toISOString(),
     "history": [5000, 6000, 6800, 7600],
-    "bids": 4
+    "bids": 3
   },
   "iPad": {
     "description": "Brand new Apple iPad Pro 11-inch with M2 chip.",
@@ -44,7 +44,7 @@ const PRODUCTS = {
     "highest_bidder": "Rohan Verma",
     "end_time": moment().add(10, 'minutes').toISOString(),
     "history": [48000, 50000, 51000, 52000],
-    "bids": 4
+    "bids": 10
   },
   "PS5": {
     "description": "Sony PlayStation 5 with DualSense Controller and Horizon bundle.",
@@ -52,7 +52,7 @@ const PRODUCTS = {
     "highest_bidder": "Simran Bhatia",
     "end_time": moment().add(6, 'minutes').toISOString(),
     "history": [39000, 40000, 41000, 42000],
-    "bids": 4
+    "bids": 6
   },
   "MacBook Air": {
     "description": "Apple MacBook Air M2 (2023), 256GB SSD, Space Gray.",
@@ -60,7 +60,7 @@ const PRODUCTS = {
     "highest_bidder": "Nikhil Joshi",
     "end_time": moment().add(12, 'minutes').toISOString(),
     "history": [87000, 89000, 91000, 92000],
-    "bids": 4
+    "bids": 25
   },
   "Gaming Chair": {
     "description": "Ergonomic RGB gaming chair with adjustable armrests and lumbar support.",
@@ -68,7 +68,7 @@ const PRODUCTS = {
     "highest_bidder": "Tanvi Desai",
     "end_time": moment().add(7, 'minutes').toISOString(),
     "history": [15000, 16000, 17000, 18000],
-    "bids": 4
+    "bids": 5
   },
   "GoPro Hero 12": {
     "description": "GoPro Hero 12 Black with 5K video, waterproof up to 33ft.",
@@ -76,7 +76,7 @@ const PRODUCTS = {
     "highest_bidder": "Kabir Malik",
     "end_time": moment().add(9, 'minutes').toISOString(),
     "history": [30000, 32000, 34000, 35000],
-    "bids": 4
+    "bids": 2
   },
   "iPhone 14": {
     "description": "Apple iPhone 14, 128GB, Midnight Black, brand new.",
@@ -84,7 +84,7 @@ const PRODUCTS = {
     "highest_bidder": "Ananya Reddy",
     "end_time": moment().add(15, 'minutes').toISOString(),
     "history": [70000, 71000, 72000, 73000],
-    "bids": 4
+    "bids": 20
   },
   "Canon DSLR": {
     "description": "Canon EOS 200D DSLR with dual lens kit (18–55mm + 55–250mm).",
@@ -303,6 +303,125 @@ const handleListAvailableProducts = (data) => ({
   products: Object.keys(PRODUCTS)
 });
 
+
+const handleProductRecommendationIntent = (data) => {
+  const criteria = data.criteria || 'most_competitive'; // Default to most competitive
+  const now = moment();
+  
+  // Prepare all products with their metrics
+  const productsWithMetrics = Object.entries(PRODUCTS).map(([name, item]) => {
+    const endTime = moment(item.end_time);
+    const timeRemaining = endTime.diff(now, 'seconds');
+    const minsRemaining = timeRemaining / 60;
+    
+    // Calculate competitiveness score (similar to ProductCompetitivenessIntent)
+    const recentBids = item.history.filter(bid => 
+      moment(bid.timestamp || item.end_time).isAfter(moment().subtract(15, 'minutes'))
+    ).length;
+    const bidsPerMinute = recentBids / 15;
+    const priceIncrease = item.highest_bid - (item.history[0] || item.highest_bid);
+    const percentIncrease = (priceIncrease / item.history[0]) * 100 || 0;
+    const uniqueBidders = new Set(item.history.map(b => b.user_id)).size;
+    const isFinalPhase = minsRemaining < 5;
+    
+    const competitivenessScore = Math.min(100, Math.round(
+      (bidsPerMinute * 10) +
+      (percentIncrease * 0.5) +
+      (uniqueBidders * 3) +
+      (isFinalPhase ? 30 : 0)
+    ));
+    
+    return {
+      name,
+      description: item.description,
+      highest_bid: item.highest_bid,
+      highest_bidder: item.highest_bidder,
+      bids: item.bids,
+      time_remaining: timeRemaining,
+      mins_remaining: minsRemaining,
+      competitiveness: competitivenessScore,
+      recent_bids: recentBids,
+      price_increase: priceIncrease
+    };
+  });
+
+  // Sort based on requested criteria
+  let sortedProducts = [];
+  let recommendationReason = "";
+  
+  switch(criteria) {
+    case 'most_competitive':
+      sortedProducts = productsWithMetrics.sort((a, b) => b.competitiveness - a.competitiveness);
+      recommendationReason = "These products have the highest bidding activity and competition";
+      break;
+      
+    case 'least_competitive':
+      sortedProducts = productsWithMetrics.sort((a, b) => a.competitiveness - b.competitiveness);
+      recommendationReason = "These products have the least bidding activity, potentially good deals";
+      break;
+      
+    case 'ending_soonest':
+      sortedProducts = productsWithMetrics.sort((a, b) => a.time_remaining - b.time_remaining);
+      recommendationReason = "These auctions are ending soonest - act fast!";
+      break;
+      
+    case 'most_time_remaining':
+      sortedProducts = productsWithMetrics.sort((a, b) => b.time_remaining - a.time_remaining);
+      recommendationReason = "These auctions have the most time remaining - you can take your time";
+      break;
+      
+    case 'highest_amount':
+      sortedProducts = productsWithMetrics.sort((a, b) => b.highest_bid - a.highest_bid);
+      recommendationReason = "These are the most expensive items currently";
+      break;
+      
+    case 'lowest_amount':
+      sortedProducts = productsWithMetrics.sort((a, b) => a.highest_bid - b.highest_bid);
+      recommendationReason = "These are the least expensive items currently";
+      break;
+      
+    case 'most_bids':
+      sortedProducts = productsWithMetrics.sort((a, b) => b.bids - a.bids);
+      recommendationReason = "These items have received the most bids";
+      break;
+      
+    case 'least_bids':
+      sortedProducts = productsWithMetrics.sort((a, b) => a.bids - b.bids);
+      recommendationReason = "These items have received the fewest bids";
+      break;
+      
+    default:
+      sortedProducts = productsWithMetrics.sort((a, b) => b.competitiveness - a.competitiveness);
+      recommendationReason = "Here are some product recommendations";
+  }
+
+  // Format the response
+  const recommendations = sortedProducts.slice(0, 3).map(product => ({
+    product: product.name,
+    description: product.description,
+    current_bid: product.highest_bid,
+    time_remaining: product.time_remaining > 0 
+      ? `${Math.floor(product.mins_remaining)}m ${Math.round(product.time_remaining % 60)}s`
+      : "Ended",
+    competitiveness: product.competitiveness,
+    competitiveness_level: product.competitiveness > 75 ? "Very High" :
+                          product.competitiveness > 50 ? "High" :
+                          product.competitiveness > 25 ? "Moderate" : "Low",
+    recent_bids: product.recent_bids,
+    price_increase: product.price_increase
+  }));
+
+  return {
+    status: "success",
+    criteria_requested: criteria,
+    recommendation_reason: recommendationReason,
+    recommendations,
+    all_metrics: criteria === 'show_all' ? productsWithMetrics : undefined
+  };
+};
+
+
+
 const handleUserNotifications = (data) => {
   const user_id = data.user_id;
   const notifications = [];
@@ -410,15 +529,104 @@ const handleAutoBid = (data) => {
       initialBidPlaced = placeBidInternal(dummySocketForIntent, product, nextBidAmount, user_id, true);
     }
   } else if (PRODUCTS[product].highest_bidder === user_id) {
-      return { status: 'success', message: `Auto-bid set for ${product} up to ₹${max_amount}. You are currently the highest bidder.`, product: product, max_amount: data.maxBidAmount, user: user_id };
+      return { status: 'success', message: `Auto-bid set for ${product} up to ₹${data.maxAutoBidAmount}. You are currently the highest bidder.`, product: product, max_amount: data.maxBidAmount, user: user_id };
   }
 
   return {
     status: 'success',
-    message: `Auto-bid set for ${product} up to ${data.maxBidAmount}. ${initialBidPlaced ? 'An initial bid was placed.' : ''}`,
+    message: `Auto-bid set for ${product} up to ${data.maxAutoBidAmount}. ${initialBidPlaced ? 'An initial bid was placed.' : ''}`,
     product: product,
     max_amount: max_amount,
     user: user_id
+  };
+};
+
+
+const handleProductCompetitiveness = (data) => {
+  const { productName } = data;
+  const product = PRODUCTS[productName];
+  
+  if (!product) {
+    return { 
+      status: "error", 
+      message: "Product not found or auction ended" 
+    };
+  }
+
+  // 1. Calculate bidding velocity (bids per minute)
+  const biddingWindow = 15; // Analyze last 15 minutes
+  const recentBids = product.history.filter(bid => {
+    const bidTime = moment(bid.timestamp || product.end_time);
+    return moment().diff(bidTime, 'minutes') <= biddingWindow;
+  }).length;
+  
+  const bidsPerMinute = recentBids / biddingWindow;
+
+  // 2. Price increase analysis
+  const priceIncrease = product.highest_bid - (product.history[0] || product.highest_bid);
+  const percentIncrease = (priceIncrease / product.history[0]) * 100 || 0;
+
+  // 3. Bidder participation
+  const uniqueBidders = new Set(product.history.map(b => b.user_id)).size;
+
+  // 4. Time remaining analysis
+  const minsRemaining = moment(product.end_time).diff(moment(), 'minutes');
+  const isFinalPhase = minsRemaining < 5;
+
+  // Competitive scoring (0-100)
+  const competitivenessScore = Math.min(100, Math.round(
+    (bidsPerMinute * 10) + // Weight bidding velocity
+    (percentIncrease * 0.5) + // Weight price jump
+    (uniqueBidders * 3) + // Weight competition
+    (isFinalPhase ? 30 : 0) // Final phase boost
+  ));
+
+  // Recommendation logic
+  let recommendation;
+  if (competitivenessScore > 75) {
+    recommendation = {
+      action: "WAIT",
+      reason: "Extremely competitive - prices are rising rapidly",
+      optimal_time: "Last 2 minutes",
+      risk: "High chance of bidding war"
+    };
+  } else if (competitivenessScore > 50) {
+    recommendation = {
+      action: "SET_AUTO_BID",
+      reason: "Moderately competitive - set a reasonable max bid",
+      optimal_time: "Within next few minutes",
+      risk: "May get outbid but good value possible"
+    };
+  } else {
+    recommendation = {
+      action: "BID_NOW",
+      reason: "Low competition - good opportunity to set early lead",
+      optimal_time: "Immediately",
+      risk: "May attract more bidders later"
+    };
+  }
+
+  return {
+    status: "success",
+    product: productName,
+    time_remaining: getTimeRemaining(product.end_time),
+    competitiveness: {
+      score: competitivenessScore,
+      level: competitivenessScore > 75 ? "Very High" :
+             competitivenessScore > 50 ? "High" :
+             competitivenessScore > 25 ? "Moderate" : "Low",
+      indicators: {
+        bids_last_15min: recentBids,
+        bids_per_minute: bidsPerMinute.toFixed(1),
+        price_increase: `${priceIncrease} (${percentIncrease.toFixed(1)}%)`,
+        unique_bidders: uniqueBidders,
+        final_phase: isFinalPhase ? "Yes" : "No"
+      }
+    },
+    recommendation,
+    watchlist_trigger: competitivenessScore > 60 
+      ? "This item has been added to your watchlist for updates"
+      : undefined
   };
 };
 
@@ -490,10 +698,156 @@ const handleHaveIBeenOutbid = (data) => {
   }
 };
 
+const handleAuctionAtmosphere = (data) => {
+  // Calculate overall activity level
+  const totalLiveBids = Object.values(PRODUCTS).reduce((sum, p) => sum + p.bids, 0);
+  const recentBids = Object.values(PRODUCTS).reduce((sum, p) => {
+    return sum + p.history.filter(bid => 
+      moment(bid.timestamp || new Date()).isAfter(moment().subtract(5, 'minutes'))
+    ).length;
+  }, 0);
+
+  // Identify most active auctions
+  const hotAuctions = Object.entries(PRODUCTS)
+    .map(([name, data]) => ({
+      product: name,
+      bid_activity: data.history.filter(bid => 
+        moment(bid.timestamp || new Date()).isAfter(moment().subtract(5, 'minutes')))
+      .length
+    }))
+    .sort((a, b) => b.bid_activity - a.bid_activity)
+    .slice(0, 3);
+
+  // Determine atmosphere
+  let atmosphere;
+  if (recentBids > 15) atmosphere = "Highly Competitive";
+  else if (recentBids > 8) atmosphere = "Active";
+  else atmosphere = "Calm";
+
+  return {
+    status: "success",
+    atmosphere: {
+      level: atmosphere,
+      bids_last_5_min: recentBids,
+      total_live_bids: totalLiveBids,
+      hottest_items: hotAuctions,
+      recommended_action: atmosphere === "Highly Competitive" 
+        ? "Focus on 1-2 items to avoid overbidding" 
+        : "Good opportunity to bid on multiple items"
+    }
+  };
+};
+
 const handleGetMyBidStatus = (data) => {
+  const user_id = data.user;
+  const product_filter = data.productName || null;
+  
+  if (!user_id) {
+    return { 
+      status: "error", 
+      message: "User ID is required" 
+    };
+  }
+
+  const userBids = USER_BIDS[user_id] || [];
+  const results = {
+    won: [],
+    lost: [],
+    leading: [],
+    outbid: [],
+    active: []
+  };
+
+  // Check closed products first
+  for (const [product_name, product_data] of Object.entries(CLOSED_PRODUCTS)) {
+    if (product_filter && product_name !== product_filter) continue;
+    
+    const user_participated = userBids.some(bid => bid.product === product_name);
+    if (!user_participated) continue;
+
+    const user_won = (product_data.highest_bidder === user_id);
+    const user_max_bid = Math.max(...userBids
+      .filter(bid => bid.product === product_name)
+      .map(bid => bid.amount)
+    );
+
+    if (user_won) {
+      results.won.push({
+        product: product_name,
+        final_price: product_data.highest_bid,
+        your_max_bid: user_max_bid,
+        closed_at: product_data.end_time
+      });
+    } else {
+      results.lost.push({
+        product: product_name,
+        winner: product_data.highest_bidder,
+        winning_bid: product_data.highest_bid,
+        your_max_bid: user_max_bid,
+        closed_at: product_data.end_time
+      });
+    }
+  }
+
+  // Check live products
+  for (const [product_name, product_data] of Object.entries(PRODUCTS)) {
+    if (product_filter && product_name !== product_filter) continue;
+    
+    const user_participated = userBids.some(bid => bid.product === product_name);
+    if (!user_participated) continue;
+
+    const user_max_bid = Math.max(...userBids
+      .filter(bid => bid.product === product_name)
+      .map(bid => bid.amount)
+    );
+
+    if (product_data.highest_bidder === user_id) {
+      results.leading.push({
+        product: product_name,
+        current_bid: product_data.highest_bid,
+        your_max_bid: user_max_bid,
+        time_remaining: getTimeRemaining(product_data.end_time),
+        bids_so_far: product_data.bids
+      });
+    } else if (product_data.highest_bid > user_max_bid) {
+      results.outbid.push({
+        product: product_name,
+        current_leader: product_data.highest_bidder,
+        current_bid: product_data.highest_bid,
+        your_max_bid: user_max_bid,
+        time_remaining: getTimeRemaining(product_data.end_time)
+      });
+    } else {
+      // User has bids but neither leading nor outbid (possible in some auction logic)
+      results.active.push({
+        product: product_name,
+        status: "active",
+        current_bid: product_data.highest_bid,
+        your_max_bid: user_max_bid,
+        time_remaining: getTimeRemaining(product_data.end_time)
+      });
+    }
+  }
+
+  // Generate summary statistics
+  const summary = {
+    total_won: results.won.length,
+    total_lost: results.lost.length,
+    currently_leading: results.leading.length,
+    currently_outbid: results.outbid.length,
+    active_participations: results.active.length,
+    win_rate: results.won.length + results.lost.length > 0 
+      ? `${(results.won.length / (results.won.length + results.lost.length) * 100).toFixed(1)}%` 
+      : "0%"
+  };
+
   return { 
-    status: "outbid", 
-    product: data.productName || "All Products" 
+    status: "success",
+    summary,
+    details: results,
+    message: product_filter 
+      ? `Status for ${product_filter}` 
+      : "Your complete bidding status across all auctions"
   };
 };
 
@@ -640,7 +994,21 @@ const INTENT_HANDLERS = {
   "GetAuctionHistoryIntent": handleGetAuctionHistory,
   "FullAuctionSummaryIntent": handleFullAuctionSummary,
   "AutoBidIntent": handleAutoBid,
+  "ActionAtmosphereIntent": handleAuctionAtmosphere,
+  "ProductCompetitivenessIntent": handleProductCompetitiveness,
+  "ProductRecommendationIntent": handleProductRecommendationIntent,
 };
+
+// Make sure this route is before any HTML-serving routes
+app.get('/get-omnidimension-widget', (req, res) => {
+  // Explicitly set content-type to JSON
+  res.setHeader('Content-Type', 'application/json');
+  
+  res.json({
+    success: true,
+    scriptUrl: `https://backend.omnidim.io/web_widget.js?secret_key=${process.env.OMNIDIMENSION_SECRET_KEY}`
+  });
+});
 
 // Webhook Endpoint
 app.post('/webhook', (req, res) => {
@@ -669,7 +1037,9 @@ app.post('/webhook', (req, res) => {
   res.json(response_data);
 });
 
-// REST Endpoints
+
+
+
 app.get('/products', (req, res) => {
   res.json({ products: PRODUCTS });
 });

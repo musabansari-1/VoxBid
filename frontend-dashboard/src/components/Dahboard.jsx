@@ -922,6 +922,7 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
+import BASE_URL from '../config';
 
 const Dashboard = () => {
   const [products, setProducts] = useState({});
@@ -933,7 +934,7 @@ const Dashboard = () => {
   const fetchProducts = async () => {
     setIsLoading(true);
     try {
-      const response = await axios.get('http://localhost:8000/products');
+      const response = await axios.get(`${BASE_URL}/products`);
       setProducts(response.data.products);
     } catch (error) {
       console.error('Error fetching products:', error);
@@ -953,7 +954,7 @@ const Dashboard = () => {
   useEffect(() => {
     fetchProducts();
 
-    const newSocket = io('http://localhost:8000', {
+    const newSocket = io(`${BASE_URL}`, {
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,

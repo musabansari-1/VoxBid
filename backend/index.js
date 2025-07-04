@@ -3,6 +3,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const moment = require('moment');
+const axios = require('axios');
 
 // Initialize Express app
 const app = express();
@@ -107,102 +108,456 @@ const PRODUCTS = {
 const CLOSED_PRODUCTS = {};
 const USER_BIDS = {};
 const AUTO_BIDS = {}; // Stores auto-bid configurations: { userId: { productName: { maxAmount: number } } }
+const USER_BUDGETS = {};
 
-// Helper Functions
-// Function to handle placing a bid (internal use for both manual and auto-bids)
+// // Helper Functions
+// // Function to handle placing a bid (internal use for both manual and auto-bids)
+// const placeBidInternal = (socket, product, amount, user_id, is_auto_bid = false) => {
+//   if (PRODUCTS[product]) {
+//     const current = PRODUCTS[product].highest_bid;
+//     if (amount > current) {
+//       PRODUCTS[product].highest_bid = amount;
+//       PRODUCTS[product].history.push(amount);
+//       PRODUCTS[product].bids += 1;
+//       PRODUCTS[product].highest_bidder = user_id;
+
+//       const bid = {
+//         product,
+//         user_id,
+//         amount,
+//         time: Date.now(),
+//       };
+
+//       if (!USER_BIDS[user_id]) {
+//         USER_BIDS[user_id] = [];
+//       }
+//       USER_BIDS[user_id].push(bid);
+
+//       if(USER_BUDGETS[user_id]){
+//         USER_BUDGETS[user_id].spent += amount;
+//         }
+
+//       io.emit('bid_update', {
+//         product,
+//         highest_bid: amount,
+//         bids: PRODUCTS[product].bids,
+//         user: user_id,
+//         is_auto_bid: is_auto_bid, // Indicate if it's an auto-bid
+//       });
+
+//       // Emit response to the specific socket if it's a real socket
+//       if (socket && typeof socket.emit === 'function' && !socket.is_dummy) {
+//         socket.emit('bid_response', {
+//           status: 'success',
+//           message: `${is_auto_bid ? 'Auto-bid' : 'Bid'} placed successfully on ${product} for ₹${amount}.`,
+//           product,
+//           amount,
+//           is_auto_bid,
+//         });
+//       } else {
+//         // For dummy sockets (e.g., from intent handlers or timer),
+//         // broadcast a general notification or log.
+//         io.emit('general_notification', {
+//             type: 'bid_status',
+//             message: `${is_auto_bid ? 'Auto-bid' : 'Bid'} placed for ${product} by ${user_id} for ₹${amount}.`,
+//             product,
+//             amount,
+//             user: user_id,
+//             is_auto_bid,
+//         });
+//         console.log(`[Dummy Socket Action] ${is_auto_bid ? 'Auto-bid' : 'Bid'} placed for ${product} by ${user_id} for ₹${amount}.`);
+//       }
+      
+//       return true;
+//     } else {
+//       if (socket && typeof socket.emit === 'function' && !socket.is_dummy) {
+//         socket.emit('bid_response', {
+//           status: 'error',
+//           message: `Bid amount ₹${amount} is too low for ${product}. Current highest bid: ₹${current}.`,
+//           product,
+//           amount,
+//           is_auto_bid,
+//         });
+//       } else {
+//         io.emit('general_notification', {
+//             type: 'bid_status_error',
+//             message: `Bid amount ₹${amount} is too low for ${product}. Current highest bid: ₹${current}.`,
+//             product,
+//             amount,
+//             user: user_id,
+//             is_auto_bid,
+//         });
+//         console.log(`[Dummy Socket Action] Bid amount ₹${amount} is too low for ${product}. Current highest bid: ₹${current}.`);
+//       } 
+//       return false;
+//     }
+//   } else {
+//     if (socket && typeof socket.emit === 'function' && !socket.is_dummy) {
+//       socket.emit('bid_response', {
+//         status: 'error',
+//         message: 'Product not found or auction ended.',
+//         product,
+//         amount,
+//         is_auto_bid,
+//       });
+//     } else {
+//         io.emit('general_notification', {
+//             type: 'bid_status_error',
+//             message: `Product ${product} not found or auction ended.`,
+//             product,
+//             amount,
+//             user: user_id,
+//             is_auto_bid,
+//         });
+//         console.log(`[Dummy Socket Action] Product ${product} not found or auction ended.`);
+//     }
+//     return false;
+//   }
+// };
+
+
+
+// // Improved placeBidInternal function with proper auto-bid accounting
+// const placeBidInternal = (socket, product, amount, user_id, is_auto_bid = false) => {
+//   if (!PRODUCTS[product]) {
+//     const errorMsg = 'Product not found or auction ended.';
+//     handleBidError(socket, product, amount, user_id, is_auto_bid, errorMsg);
+//     return false;
+//   }
+
+//   const current = PRODUCTS[product].highest_bid;
+//   if (amount <= current) {
+//     const errorMsg = `Bid amount ₹${amount} is too low. Current highest bid: ₹${current}.`;
+//     handleBidError(socket, product, amount, user_id, is_auto_bid, errorMsg);
+//     return false;
+//   }
+
+//   // Process the successful bid
+//   PRODUCTS[product].highest_bid = amount;
+//   PRODUCTS[product].history.push({
+//     amount,
+//     user_id,
+//     timestamp: new Date().toISOString(),
+//     is_auto_bid
+//   });
+//   PRODUCTS[product].bids += 1;
+//   PRODUCTS[product].highest_bidder = user_id;
+
+//   const bid = {
+//     product,
+//     user_id,
+//     amount,
+//     time: Date.now(),
+//     is_auto_bid
+//   };
+
+//   // Initialize user bids if not exists
+//   if (!USER_BIDS[user_id]) {
+//     USER_BIDS[user_id] = [];
+//   }
+
+//   // Handle budget accounting
+//   if (USER_BUDGETS[user_id]) {
+//     if (is_auto_bid) {
+//       // For auto-bids, find and remove any previous auto-bid for this product
+//       const previousAutoBidIndex = USER_BIDS[user_id].findIndex(
+//         b => b.product === product && b.is_auto_bid
+//       );
+      
+//       if (previousAutoBidIndex !== -1) {
+//         USER_BUDGETS[user_id].spent -= USER_BIDS[user_id][previousAutoBidIndex].amount;
+//         USER_BIDS[user_id].splice(previousAutoBidIndex, 1);
+//       }
+//     }
+//     USER_BUDGETS[user_id].spent += amount;
+//   }
+
+//   USER_BIDS[user_id].push(bid);
+
+//   // Notify all clients
+//   io.emit('bid_update', {
+//     product,
+//     highest_bid: amount,
+//     bids: PRODUCTS[product].bids,
+//     user: user_id,
+//     is_auto_bid
+//   });
+
+//   // Send response to the bidder
+//   const successMsg = `${is_auto_bid ? 'Auto-bid' : 'Bid'} placed successfully on ${product} for ₹${amount}.`;
+//   if (socket && typeof socket.emit === 'function' && !socket.is_dummy) {
+//     socket.emit('bid_response', {
+//       status: 'success',
+//       message: successMsg,
+//       product,
+//       amount,
+//       is_auto_bid,
+//     });
+//   } else {
+//     io.emit('general_notification', {
+//       type: 'bid_status',
+//       message: successMsg,
+//       product,
+//       amount,
+//       user: user_id,
+//       is_auto_bid,
+//     });
+//     console.log(`[Dummy Socket Action] ${successMsg}`);
+//   }
+  
+//   return true;
+// };
+
+// const placeBidInternal = (socket, product, amount, user_id, is_auto_bid = false) => {
+//   if (PRODUCTS[product]) {
+//     const current = PRODUCTS[product].highest_bid;
+//     if (amount > current) {
+//       PRODUCTS[product].highest_bid = amount;
+//       PRODUCTS[product].history.push(amount);
+//       PRODUCTS[product].bids += 1;
+//       PRODUCTS[product].highest_bidder = user_id;
+
+//       const bid = {
+//         product,
+//         user_id,
+//         amount,
+//         time: Date.now(),
+//       };
+
+//       if (!USER_BIDS[user_id]) {
+//         USER_BIDS[user_id] = [];
+//       }
+//       USER_BIDS[user_id].push(bid);
+
+//       if(USER_BUDGETS[user_id]){
+//         USER_BUDGETS[user_id].spent += amount;
+//         }
+
+//       io.emit('bid_update', {
+//         product,
+//         highest_bid: amount,
+//         bids: PRODUCTS[product].bids,
+//         user: user_id,
+//         is_auto_bid: is_auto_bid, // Indicate if it's an auto-bid
+//       });
+
+//       // Emit response to the specific socket if it's a real socket
+//       if (socket && typeof socket.emit === 'function' && !socket.is_dummy) {
+//         socket.emit('bid_response', {
+//           status: 'success',
+//           message: `${is_auto_bid ? 'Auto-bid' : 'Bid'} placed successfully on ${product} for ₹${amount}.`,
+//           product,
+//           amount,
+//           is_auto_bid,
+//         });
+//       } else {
+//         // For dummy sockets (e.g., from intent handlers or timer),
+//         // broadcast a general notification or log.
+//         io.emit('general_notification', {
+//             type: 'bid_status',
+//             message: `${is_auto_bid ? 'Auto-bid' : 'Bid'} placed for ${product} by ${user_id} for ₹${amount}.`,
+//             product,
+//             amount,
+//             user: user_id,
+//             is_auto_bid,
+//         });
+//         console.log(`[Dummy Socket Action] ${is_auto_bid ? 'Auto-bid' : 'Bid'} placed for ${product} by ${user_id} for ₹${amount}.`);
+//       }
+      
+//       return true;
+//     } else {
+//       if (socket && typeof socket.emit === 'function' && !socket.is_dummy) {
+//         socket.emit('bid_response', {
+//           status: 'error',
+//           message: `Bid amount ₹${amount} is too low for ${product}. Current highest bid: ₹${current}.`,
+//           product,
+//           amount,
+//           is_auto_bid,
+//         });
+//       } else {
+//         io.emit('general_notification', {
+//             type: 'bid_status_error',
+//             message: `Bid amount ₹${amount} is too low for ${product}. Current highest bid: ₹${current}.`,
+//             product,
+//             amount,
+//             user: user_id,
+//             is_auto_bid,
+//         });
+//         console.log(`[Dummy Socket Action] Bid amount ₹${amount} is too low for ${product}. Current highest bid: ₹${current}.`);
+//       } 
+//       return false;
+//     }
+//   } else {
+//     if (socket && typeof socket.emit === 'function' && !socket.is_dummy) {
+//       socket.emit('bid_response', {
+//         status: 'error',
+//         message: 'Product not found or auction ended.',
+//         product,
+//         amount,
+//         is_auto_bid,
+//       });
+//     } else {
+//         io.emit('general_notification', {
+//             type: 'bid_status_error',
+//             message: `Product ${product} not found or auction ended.`,
+//             product,
+//             amount,
+//             user: user_id,
+//             is_auto_bid,
+//         });
+//         console.log(`[Dummy Socket Action] Product ${product} not found or auction ended.`);
+//     }
+//     return false;
+//   }
+// };
+
+
 const placeBidInternal = (socket, product, amount, user_id, is_auto_bid = false) => {
   if (PRODUCTS[product]) {
     const current = PRODUCTS[product].highest_bid;
-    if (amount > current) {
-      PRODUCTS[product].highest_bid = amount;
-      PRODUCTS[product].history.push(amount);
-      PRODUCTS[product].bids += 1;
-      PRODUCTS[product].highest_bidder = user_id;
-
-      const bid = {
-        product,
-        user_id,
-        amount,
-        time: Date.now(),
-      };
-
-      if (!USER_BIDS[user_id]) {
-        USER_BIDS[user_id] = [];
-      }
-      USER_BIDS[user_id].push(bid);
-
-      io.emit('bid_update', {
-        product,
-        highest_bid: amount,
-        bids: PRODUCTS[product].bids,
-        user: user_id,
-        is_auto_bid: is_auto_bid, // Indicate if it's an auto-bid
-      });
-
-      // Emit response to the specific socket if it's a real socket
-      if (socket && typeof socket.emit === 'function' && !socket.is_dummy) {
-        socket.emit('bid_response', {
-          status: 'success',
-          message: `${is_auto_bid ? 'Auto-bid' : 'Bid'} placed successfully on ${product} for ₹${amount}.`,
-          product,
-          amount,
-          is_auto_bid,
-        });
-      } else {
-        // For dummy sockets (e.g., from intent handlers or timer),
-        // broadcast a general notification or log.
-        io.emit('general_notification', {
-            type: 'bid_status',
-            message: `${is_auto_bid ? 'Auto-bid' : 'Bid'} placed for ${product} by ${user_id} for ₹${amount}.`,
-            product,
-            amount,
-            user: user_id,
-            is_auto_bid,
-        });
-        console.log(`[Dummy Socket Action] ${is_auto_bid ? 'Auto-bid' : 'Bid'} placed for ${product} by ${user_id} for ₹${amount}.`);
-      }
-      return true;
-    } else {
+    
+    // Check if bid amount is valid
+    if (amount <= current) {
+      const errorMsg = `Bid amount ₹${amount} is too low. Current highest bid is ₹${current}`;
+      
       if (socket && typeof socket.emit === 'function' && !socket.is_dummy) {
         socket.emit('bid_response', {
           status: 'error',
-          message: `Bid amount ₹${amount} is too low for ${product}. Current highest bid: ₹${current}.`,
+          message: errorMsg,
           product,
           amount,
-          is_auto_bid,
+          is_auto_bid
         });
       } else {
         io.emit('general_notification', {
-            type: 'bid_status_error',
-            message: `Bid amount ₹${amount} is too low for ${product}. Current highest bid: ₹${current}.`,
-            product,
-            amount,
-            user: user_id,
-            is_auto_bid,
+          type: 'bid_error',
+          message: errorMsg,
+          product,
+          user: user_id
         });
-        console.log(`[Dummy Socket Action] Bid amount ₹${amount} is too low for ${product}. Current highest bid: ₹${current}.`);
       }
       return false;
     }
-  } else {
+
+    // Check user budget
+    if (USER_BUDGETS[user_id]) {
+      const existingBidIndex = USER_BIDS[user_id]?.findIndex(b => b.product === product) ?? -1;
+      const existingBidAmount = existingBidIndex !== -1 ? USER_BIDS[user_id][existingBidIndex].amount : 0;
+      const netAmount = amount - existingBidAmount;
+      
+      if (USER_BUDGETS[user_id].totalBudget < (USER_BUDGETS[user_id].spent + netAmount)) {
+        const errorMsg = `Insufficient budget. You need ₹${netAmount} more to place this bid`;
+        
+        if (socket && typeof socket.emit === 'function' && !socket.is_dummy) {
+          socket.emit('bid_response', {
+            status: 'error',
+            message: errorMsg,
+            product,
+            amount,
+            is_auto_bid
+          });
+        } else {
+          io.emit('general_notification', {
+            type: 'budget_error',
+            message: errorMsg,
+            user: user_id
+          });
+        }
+        return false;
+      }
+    }
+
+    // Process the bid
+    PRODUCTS[product].highest_bid = amount;
+    PRODUCTS[product].highest_bidder = user_id;
+    PRODUCTS[product].bids += 1;
+    PRODUCTS[product].history.push({
+      amount,
+      user_id,
+      timestamp: new Date().toISOString(),
+      is_auto_bid
+    });
+
+    // Initialize user bids if needed
+    if (!USER_BIDS[user_id]) {
+      USER_BIDS[user_id] = [];
+    }
+
+    // Handle existing bid replacement
+    const existingBidIndex = USER_BIDS[user_id].findIndex(b => b.product === product);
+    if (existingBidIndex !== -1) {
+      if (USER_BUDGETS[user_id]) {
+        USER_BUDGETS[user_id].spent -= USER_BIDS[user_id][existingBidIndex].amount;
+      }
+      USER_BIDS[user_id].splice(existingBidIndex, 1);
+    }
+
+    // Record new bid
+    USER_BIDS[user_id].push({
+      product,
+      user_id,
+      amount,
+      time: Date.now(),
+      is_auto_bid
+    });
+
+    // Update budget
+    if (USER_BUDGETS[user_id]) {
+      USER_BUDGETS[user_id].spent += amount;
+    }
+
+    // Notify all clients
+    io.emit('bid_update', {
+      product,
+      highest_bid: amount,
+      bids: PRODUCTS[product].bids,
+      user: user_id,
+      is_auto_bid
+    });
+
+    // Send success response
+    const successMsg = `${is_auto_bid ? 'Auto-bid' : 'Bid'} placed successfully on ${product} for ₹${amount}`;
     if (socket && typeof socket.emit === 'function' && !socket.is_dummy) {
       socket.emit('bid_response', {
-        status: 'error',
-        message: 'Product not found or auction ended.',
+        status: 'success',
+        message: successMsg,
         product,
         amount,
         is_auto_bid,
+        budget: USER_BUDGETS[user_id] ? {
+          total: USER_BUDGETS[user_id].totalBudget,
+          spent: USER_BUDGETS[user_id].spent,
+          remaining: USER_BUDGETS[user_id].totalBudget - USER_BUDGETS[user_id].spent
+        } : undefined
       });
     } else {
-        io.emit('general_notification', {
-            type: 'bid_status_error',
-            message: `Product ${product} not found or auction ended.`,
-            product,
-            amount,
-            user: user_id,
-            is_auto_bid,
-        });
-        console.log(`[Dummy Socket Action] Product ${product} not found or auction ended.`);
+      io.emit('general_notification', {
+        type: 'bid_success',
+        message: successMsg,
+        product,
+        user: user_id,
+        amount
+      });
+    }
+
+    return true;
+  } else {
+    // Product not found
+    const errorMsg = `Auction for ${product} not found or has ended`;
+    if (socket && typeof socket.emit === 'function' && !socket.is_dummy) {
+      socket.emit('bid_response', {
+        status: 'error',
+        message: errorMsg,
+        product,
+        amount,
+        is_auto_bid
+      });
+    } else {
+      io.emit('general_notification', {
+        type: 'auction_error',
+        message: errorMsg,
+        product
+      });
     }
     return false;
   }
@@ -422,50 +777,314 @@ const handleProductRecommendationIntent = (data) => {
 
 
 
-const handleUserNotifications = (data) => {
-  const user_id = data.user_id;
-  const notifications = [];
 
+// const handleUserNotifications = (data) => {
+//   // Debugging setup
+//   const testNotifications = [{
+//     type: "debug_test",
+//     product: "TEST_ITEM",
+//     message: "Notification system is active",
+//     timestamp: new Date().toISOString()
+//   }];
+
+//   if (!data || !data.user) {
+//     return { notifications: testNotifications };
+//   }
+
+//   const user_id = data.user;
+//   const notifications = [...testNotifications];
+//   const now = moment();
+
+//   for (const bid of USER_BIDS[user_id] || []) {
+//     const product = bid.product;
+//     const user_bid = bid.amount;
+//     console.log('product',product);
+//     console.log('amount', user_bid);
+//   }
+
+//   // 1. Check active auctions for outbids and ending soon
+//   for (const bid of USER_BIDS[user_id] || []) {
+//     const product = bid.product;
+//     const user_bid = bid.amount;
+
+//     if (PRODUCTS[product]) {
+//       const product_data = PRODUCTS[product];
+      
+//       // Outbid check
+//       if (product_data.highest_bid > user_bid && product_data.highest_bidder !== user_id) {
+//         notifications.push({
+//           type: "outbid",
+//           product,
+//           message: `You've been outbid on ${product}. Current bid: ₹${product_data.highest_bid}`,
+//           timestamp: now.toISOString()
+//         });
+//       }
+
+//       // Ending soon check
+//       const secondsRemaining = moment(product_data.end_time).diff(now, 'seconds');
+//       if (secondsRemaining > 0 && secondsRemaining <= 120) {
+//         const mins = Math.floor(secondsRemaining / 60);
+//         const secs = secondsRemaining % 60;
+//         notifications.push({
+//           type: "ending_soon",
+//           product,
+//           message: `${product} ending in ${mins}m ${secs}s! Current bid: ₹${product_data.highest_bid}`,
+//           timestamp: now.toISOString()
+//         });
+//       }
+//     }
+//   }
+
+//   // 2. Check closed auctions for wins
+//   for (const [product, product_data] of Object.entries(CLOSED_PRODUCTS)) {
+//     const user_has_bid = USER_BIDS[user_id]?.some(bid => bid.product === product);
+//     if (user_has_bid && product_data.highest_bidder === user_id) {
+//       notifications.push({
+//         type: "won",
+//         product,
+//         message: `You won ${product} for ₹${product_data.highest_bid}!`,
+//         timestamp: product_data.end_time
+//       });
+//     }
+//   }
+
+//   // 3. Check if any auctions just ended (real-time)
+//   for (const [product, product_data] of Object.entries(PRODUCTS)) {
+//     if (moment(product_data.end_time).isSameOrAfter(now.subtract(5, 'seconds'))) {
+//       if (product_data.highest_bidder === user_id) {
+//         notifications.push({
+//           type: "won",
+//           product,
+//           message: `You just won ${product} for ₹${product_data.highest_bid}!`,
+//           timestamp: now.toISOString()
+//         });
+//       }
+//     }
+//   }
+
+//   return { notifications: notifications.length > 1 ? notifications : testNotifications };
+// };
+
+
+// const handleUserNotifications = (data) => {
+//   // Debugging setup
+//   const testNotifications = [{
+//     type: "debug_test",
+//     product: "TEST_ITEM",
+//     message: "Notification system is active",
+//     timestamp: new Date().toISOString()
+//   }];
+
+//   if (!data || !data.user) {
+//     return { notifications: testNotifications };
+//   }
+
+//   const user_id = data.user;
+//   console.log('here', user_id);
+//   const notifications = [...testNotifications];
+//   const now = moment();
+
+//   console.log(USER_BIDS[user_id])
+
+//   // 1. Check active auctions for outbids and ending soon
+//   for (const bid of USER_BIDS[user_id] || []) {
+//     const product = bid.product;
+//     const user_bid = bid.amount;
+//     console.log(product);
+//     console.log(user_bid);
+
+//     if (PRODUCTS[product]) {
+//       const product_data = PRODUCTS[product];
+      
+//       // Outbid check
+//       if (product_data.highest_bid > user_bid && product_data.highest_bidder !== user_id) {
+//         notifications.push({
+//           type: "outbid",
+//           product,
+//           message: `You've been outbid on ${product}. Current bid: ₹${product_data.highest_bid}`,
+//           timestamp: now.toISOString()
+//         });
+//       }
+
+//       // Ending soon check
+//       const secondsRemaining = moment(product_data.end_time).diff(now, 'seconds');
+//       if (secondsRemaining > 0 && secondsRemaining <= 120) {
+//         const mins = Math.floor(secondsRemaining / 60);
+//         const secs = secondsRemaining % 60;
+//         notifications.push({
+//           type: "ending_soon",
+//           product,
+//           message: `${product} ending in ${mins}m ${secs}s! Current bid: ₹${product_data.highest_bid}`,
+//           timestamp: now.toISOString()
+//         });
+//       }
+//     }
+//   }
+
+//   // 2. Check closed auctions for wins
+//   for (const [product, product_data] of Object.entries(CLOSED_PRODUCTS)) {
+//     const user_has_bid = USER_BIDS[user_id]?.some(bid => bid.product === product);
+//     if (user_has_bid && product_data.highest_bidder === user_id) {
+//       notifications.push({
+//         type: "won",
+//         product,
+//         message: `You won ${product} for ₹${product_data.highest_bid}!`,
+//         timestamp: product_data.end_time
+//       });
+//     }
+//   }
+
+//   // 3. Check if any auctions just ended (real-time)
+//   for (const [product, product_data] of Object.entries(PRODUCTS)) {
+//     // Check if auction ended in the last 5 seconds
+//     if (moment(product_data.end_time).isBetween(now.clone().subtract(5, 'seconds'), now)) {
+//       if (product_data.highest_bidder === user_id) {
+//         notifications.push({
+//           type: "won",
+//           product,
+//           message: `You just won ${product} for ₹${product_data.highest_bid}!`,
+//           timestamp: now.toISOString()
+//         });
+//       }
+//     }
+//   }
+
+//   // Return all notifications (including test one if no others exist)
+//   return { notifications };
+// };
+
+
+const handleUserNotifications = (data) => {
+  // Debugging setup
+  const testNotifications = [{
+    type: "debug_test",
+    product: "TEST_ITEM",
+    message: "Notification system is active",
+    timestamp: new Date().toISOString()
+  }];
+
+  if (!data || !data.user) {
+    return { notifications: testNotifications };
+  }
+
+  const user_id = data.user;
+  const notifications = [];
+  const now = moment();
+  console.log('now',now);
+
+  
+
+
+
+  // 1. Check active auctions for outbids and ending soon
   for (const bid of USER_BIDS[user_id] || []) {
     const product = bid.product;
     const user_bid = bid.amount;
-    const product_data = PRODUCTS[product];
 
-    if (!product_data) continue;
 
-    // Outbid
-    if (product_data.highest_bid > user_bid) {
-      notifications.push({
-        type: "outbid",
-        product,
-        message: `You've been outbid on ${product}. Highest bid is now ₹${product_data.highest_bid}.`
-      });
-    }
 
-    // Ending soon (within 2 minutes)
-    const time_left_str = getTimeRemaining(product_data.end_time);
-    try {
-      const mins_left = parseInt(time_left_str.split('m')[0]);
-      if (mins_left <= 2) {
+    if (PRODUCTS[product]) {
+      const product_data = PRODUCTS[product];
+      
+      // Outbid check
+      if (product_data.highest_bid > user_bid && product_data.highest_bidder !== user_id) {
         notifications.push({
-          type: "ending_soon",
+          type: "outbid",
           product,
-          message: `${product} auction ends in ${time_left_str}. Last bid: ₹${product_data.highest_bid}`
+          message: `You've been outbid on ${product}. Current bid: ₹${product_data.highest_bid}`,
+          timestamp: now.toISOString()
         });
       }
-    } catch (e) {}
 
-    // Auction ended and user won
-    if (time_left_str === "Ended" && product_data.highest_bid === user_bid) {
+      // Ending soon check - improved logic
+      const endTime = moment(product_data.end_time);
+      console.log('endTime', endTime);
+      const secondsRemaining = endTime.diff(now, 'seconds');
+      console.log('seconds Remaining', secondsRemaining);
+      
+      // Only notify if there's positive time remaining (auction hasn't ended)
+      if (secondsRemaining > 0) {
+        // Notify when less than 2 minutes remain
+        if (secondsRemaining <= 120) {
+          const mins = Math.floor(secondsRemaining / 60);
+          const secs = secondsRemaining % 60;
+          const timeStr = `${mins}m ${secs}s`;
+          
+          notifications.push({
+            type: "ending_soon",
+            product,
+            message: `${product} ending in ${timeStr}! Current bid: ₹${product_data.highest_bid}`,
+            timestamp: now.toISOString(),
+            time_remaining: timeStr
+          });
+        }
+        
+        // Additional notification when less than 30 seconds remain
+        if (secondsRemaining <= 30) {
+          notifications.push({
+            type: "ending_very_soon",
+            product,
+            message: `${product} ending in ${secondsRemaining} seconds! Last chance to bid!`,
+            timestamp: now.toISOString(),
+            time_remaining: `${secondsRemaining}s`
+          });
+        }
+      }
+    }
+  }
+
+  // 2. Check closed auctions for wins
+  for (const [product, product_data] of Object.entries(CLOSED_PRODUCTS)) {
+    const user_has_bid = USER_BIDS[user_id]?.some(bid => bid.product === product);
+    if (user_has_bid && product_data.highest_bidder === user_id) {
       notifications.push({
         type: "won",
         product,
-        message: `You won the auction for ${product} at ₹${user_bid}! 🎉`
+        message: `You won ${product} for ₹${product_data.highest_bid}!`,
+        timestamp: product_data.end_time
       });
     }
   }
 
-  return { notifications };
+  // 3. Check if any auctions just ended (real-time)
+  const recentlyEnded = Object.entries(PRODUCTS).filter(([product, product_data]) => {
+    const endTime = moment(product_data.end_time);
+    return endTime.isBetween(now.clone().subtract(5, 'seconds'), now);
+  });
+
+  for (const [product, product_data] of recentlyEnded) {
+    if (product_data.highest_bidder === user_id) {
+      notifications.push({
+        type: "won",
+        product,
+        message: `You just won ${product} for ₹${product_data.highest_bid}!`,
+        timestamp: now.toISOString()
+      });
+    }
+  }
+
+  const endingSoonProducts = [];
+  for(const key in PRODUCTS){
+    const product = PRODUCTS[key];
+    const product_name = key;
+    
+    const endTime = moment(product.end_time);
+    const secondsRemaining = endTime.diff(now, 'seconds');
+    if(secondsRemaining > 0 && secondsRemaining < 120){
+      endingSoonProducts.push(product_name);
+    }  
+  }
+  console.log(`These products are ending soon: ${endingSoonProducts.join(', ')}`)
+  if(endingSoonProducts.length > 0){
+    notifications.push({
+      type: "productEndingSoon",
+      message: `These auction items are ending soon: ${endingSoonProducts.join(', ')}`,
+      timestamp: now.toISOString()
+    });
+  }
+ 
+
+  return { notifications: notifications.length > 0 ? notifications : testNotifications };
 };
 
 const handleAskProduct = (data) => {
@@ -482,20 +1101,80 @@ const handleAskProduct = (data) => {
   return { error: "Product not found" };
 };
 
+// const handlePlaceBid = (data) => {
+//   const product = data.productName;
+//   const amount = parseFloat(data.bidAmount);
+//   const user_id = data.user;
+
+//   const dummySocketForIntent = { is_dummy: true, emit: (event, data) => console.log(`[Intent Handler Dummy Socket] Emitting ${event}:`, data) };
+//   const bidPlaced = placeBidInternal(dummySocketForIntent, product, amount, user_id, false);
+
+//   if (bidPlaced) {
+//     return { status: "bid_placed", product: product, amount: amount, user: user_id };
+//   } else {
+//     // If bid wasn't placed, it means it was too low or product not found/ended
+//     // placeBidInternal already emits specific error messages, so we just return a generic failure for the intent.
+//     return { status: "bid_failed", product: product, amount: amount, user: user_id };
+//   }
+// };
+
 const handlePlaceBid = (data) => {
   const product = data.productName;
   const amount = parseFloat(data.bidAmount);
   const user_id = data.user;
 
-  const dummySocketForIntent = { is_dummy: true, emit: (event, data) => console.log(`[Intent Handler Dummy Socket] Emitting ${event}:`, data) };
+  const dummySocketForIntent = { 
+    is_dummy: true, 
+    emit: (event, data) => console.log(`[Intent Handler Dummy Socket] Emitting ${event}:`, data) 
+  };
+
+  // First check if product exists
+  if (!PRODUCTS[product]) {
+    return { 
+      status: "bid_failed",
+      reason: "product_not_found",
+      message: `Auction for ${product} not found or has ended`,
+      product: product,
+      amount: amount,
+      user: user_id
+    };
+  }
+
+  // Then check if bid amount is sufficient
+  const currentBid = PRODUCTS[product].highest_bid;
+  if (amount <= currentBid) {
+    return {
+      status: "bid_failed",
+      reason: "bid_too_low",
+      message: `Your bid of ₹${amount} is too low. Current highest bid is ₹${currentBid}`,
+      product: product,
+      amount: amount,
+      user: user_id,
+      minimum_required_bid: currentBid + 1
+    };
+  }
+
+  // Try to place the bid
   const bidPlaced = placeBidInternal(dummySocketForIntent, product, amount, user_id, false);
 
   if (bidPlaced) {
-    return { status: "bid_placed", product: product, amount: amount, user: user_id };
+    return { 
+      status: "bid_placed", 
+      product: product, 
+      amount: amount, 
+      user: user_id,
+      message: `Successfully placed bid of ₹${amount} on ${product}`
+    };
   } else {
-    // If bid wasn't placed, it means it was too low or product not found/ended
-    // placeBidInternal already emits specific error messages, so we just return a generic failure for the intent.
-    return { status: "bid_failed", product: product, amount: amount, user: user_id };
+    // Fallback error (should theoretically never reach here)
+    return { 
+      status: "bid_failed", 
+      reason: "unknown_error",
+      message: "Unable to place bid due to unknown error",
+      product: product,
+      amount: amount,
+      user: user_id
+    };
   }
 };
 
@@ -530,6 +1209,9 @@ const handleAutoBid = (data) => {
     }
   } else if (PRODUCTS[product].highest_bidder === user_id) {
       return { status: 'success', message: `Auto-bid set for ${product} up to ₹${data.maxAutoBidAmount}. You are currently the highest bidder.`, product: product, max_amount: data.maxBidAmount, user: user_id };
+  }
+  else{
+    return { status: 'error', message: `Maximum bid amount is less than current highest bid`, product: product, max_amount: data.maxBidAmount, user: user_id };
   }
 
   return {
@@ -653,6 +1335,61 @@ const handleGetBiddingHistory = (data) => {
   return { error: "Product not found" };
 };
 
+
+
+const initializeUserBudget = (userId, amount) => {
+  console.log('amount', amount);
+  if (!USER_BUDGETS[userId]) {
+    USER_BUDGETS[userId] = {
+      totalBudget: amount,
+      spent: 0,
+    };
+
+    console.log('budget', USER_BUDGETS[userId])
+  }
+  return USER_BUDGETS[userId];
+};
+
+const handleSetBudgetIntent = (data) => {
+  const { user, amount } = data;
+  
+  if (!user) {
+    return { 
+      status: 'error', 
+      message: 'Invalid parameters. Need user ID and valid amount.' 
+    };
+  }
+
+  const budget = initializeUserBudget(user, amount);
+  
+  return {
+    status: 'success',
+    message: `Budget set to${amount} for ${user}`,
+    budget
+  };
+};
+
+const handleBudgetDetailsIntent = (data) => {
+  const { user } = data;
+  
+  if (!user) return { status: 'error', message: 'User ID required' };
+
+  const budget = USER_BUDGETS[user] || initializeUserBudget(user);
+
+  console.log('budget', budget);
+  
+  return {
+    status: USER_BUDGETS[user] ? 'success' : 'not_set',
+    budget,
+    message: USER_BUDGETS[user] 
+      ? `Current budget: ${budget.totalBudget} | Spent: ${budget.spent} | Remaining: ${budget.totalBudget - budget.spent}`
+      : 'No budget set for this user'
+  };
+};
+
+
+  
+ 
 const handleHaveIBeenOutbid = (data) => {
   const user_id = data.user;
   const outbid_products = [];
@@ -750,6 +1487,7 @@ const handleGetMyBidStatus = (data) => {
   }
 
   const userBids = USER_BIDS[user_id] || [];
+  console.log('userBids', userBids);
   const results = {
     won: [],
     lost: [],
@@ -861,6 +1599,7 @@ const handleGetReceipt = (data) => {
 const handleGetAllMyBids = (data) => {
   const user_id = data.user;
   if (USER_BIDS[user_id]) {
+    console.log('user bids', USER_BIDS[user_id])
     return USER_BIDS[user_id];
   }
   return {
@@ -966,6 +1705,46 @@ const handleGetAuctionHistory = (data) => {
   return response;
 };
 
+const handleFilterProductsByPrice = (data) => {
+  const { maxPrice } = data;
+  
+  if (!maxPrice || isNaN(maxPrice)) {
+    return {
+      status: "error",
+      message: "Please specify a valid maxPrice amount"
+    };
+  }
+
+  const maxAmount = parseFloat(maxPrice);
+  const affordableProducts = [];
+
+  for (const [name, product] of Object.entries(PRODUCTS)) {
+    if (product.highest_bid < maxAmount) {
+      affordableProducts.push({
+        name,
+        current_price: product.highest_bid,
+        // description: product.description,
+        // time_remaining: getTimeRemaining(product.end_time),
+        bids: product.bids,
+        highest_bidder: product.highest_bidder
+      });
+    }
+  }
+
+  // Sort by price (lowest first)
+  affordableProducts.sort((a, b) => a.current_price - b.current_price);
+
+  return {
+    status: "success",
+    max_price: maxAmount,
+    count: affordableProducts.length,
+    products: affordableProducts,
+    message: affordableProducts.length > 0 
+      ? `Found ${affordableProducts.length} products under ₹${maxAmount}`
+      : `No products found under ₹${maxAmount}`
+  };
+};
+
 const handleFullAuctionSummary = (data) => {
   const summary = [];
   for (const [name, item] of Object.entries(PRODUCTS)) {
@@ -989,7 +1768,7 @@ const INTENT_HANDLERS = {
   "GetMyBidStatusIntent": handleGetMyBidStatus,
   "GetReceiptIntent": handleGetReceipt,
   "GetAllMyBidsIntent": handleGetAllMyBids,
-  "Get_Notifications": handleUserNotifications,
+  "GetNotifications": handleUserNotifications,
   "HaveIBeenOutbidIntent": handleHaveIBeenOutbid,
   "GetAuctionHistoryIntent": handleGetAuctionHistory,
   "FullAuctionSummaryIntent": handleFullAuctionSummary,
@@ -997,18 +1776,11 @@ const INTENT_HANDLERS = {
   "ActionAtmosphereIntent": handleAuctionAtmosphere,
   "ProductCompetitivenessIntent": handleProductCompetitiveness,
   "ProductRecommendationIntent": handleProductRecommendationIntent,
+  "SetBudgetIntent": handleSetBudgetIntent,
+  "BudgetDetailsIntent": handleBudgetDetailsIntent,
+  "FilterProductsByPriceIntent": handleFilterProductsByPrice
 };
 
-// Make sure this route is before any HTML-serving routes
-app.get('/get-omnidimension-widget', (req, res) => {
-  // Explicitly set content-type to JSON
-  res.setHeader('Content-Type', 'application/json');
-  
-  res.json({
-    success: true,
-    scriptUrl: `https://backend.omnidim.io/web_widget.js?secret_key=${process.env.OMNIDIMENSION_SECRET_KEY}`
-  });
-});
 
 // Webhook Endpoint
 app.post('/webhook', (req, res) => {
@@ -1022,8 +1794,11 @@ app.post('/webhook', (req, res) => {
   console.log(`User: ${user_id}, Intent: ${intent}`);
   console.log(`Variables:`, variables);
 
+
   const handler = INTENT_HANDLERS[intent] || (() => ({ message: "Unknown intent" }));
   const response_data = handler(variables);
+
+
 
   if (intent === "PlaceBidIntent" && response_data.status?.includes("bid_placed")) {
     io.emit('bid_notification', {
